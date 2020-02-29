@@ -1,0 +1,149 @@
+kind: Template
+apiVersion: v1
+metadata:
+  name: va-dotnet-project
+objects:
+- apiVersion: build.openshift.io/v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      description: Defines how to build the VA DOTNET Project app.
+      openshift.io/generated-by: OpenShiftNewApp
+    labels:
+      app: va-dotnet-project
+      group: cicd
+      template: cicd
+    name: va-dotnet-project-bc
+  spec:
+    completionDeadlineSeconds: 3600
+    failedBuildsHistoryLimit: 5
+    nodeSelector: null
+    output:
+      to:
+        kind: ImageStreamTag
+        name: 'va-dotnet-project:latest'
+    postCommit: {}
+    resources: {}
+    runPolicy: Serial
+    source:
+      contextDir: /
+      git:
+        ref: master
+        uri: 'https://github.com/gskumar1010/sample-db-conn.git'
+      type: Git
+    strategy:
+      dockerStrategy:
+        dockerfilePath: Dockerfile
+      type: Docker
+- apiVersion: image.openshift.io/v1
+  kind: ImageStream
+  metadata:
+    annotations:
+      openshift.io/generated-by: OpenShiftNewApp
+    generation: 1
+    labels:
+      group: cicd
+      template: cicd
+    name: va-dotnet-project
+- apiVersion: apps.openshift.io/v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      openshift.io/generated-by: OpenShiftNewApp
+    labels:
+      app: va-dotnet-project
+    name: va-dotnet-project
+  spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      app: va-dotnet-project
+      deploymentconfig: va-dotnet-project
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        annotations:
+          openshift.io/generated-by: OpenShiftNewApp
+        creationTimestamp: null
+        labels:
+          app: va-dotnet-project
+          deploymentconfig: va-dotnet-project
+      spec:
+        containers:
+          - env:
+              - name: ASPNETCORE_ENVIRONMENT
+                value: Development
+              - name: ASPNETCORE_URLS
+                value: 'http://*:8080'
+              - name: va-dotnet-project-context
+                value: >-
+                  server=mssql-2017;user=sa;password=admin12345678;initial
+                  catalog=test;
+            image: ""
+            imagePullPolicy: Always
+            name: va-dotnet-project
+            resources: {}
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+    test: false
+    triggers:
+      - imageChangeParams:
+          containerNames:
+            - va-dotnet-project
+          from:
+            kind: ImageStreamTag
+            name: 'va-dotnet-project:latest'
+            namespace: ${NAMESPACE}
+        type: ImageChange
+      - type: ConfigChange
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      app: va-dotnet-project
+    name: va-dotnet-project
+  spec:
+    ports:
+      - port: 8080
+        protocol: TCP
+        targetPort: 8080
+    selector:
+      app: va-dotnet-project
+      deploymentconfig: va-dotnet-project
+    sessionAffinity: None
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    annotations:
+      openshift.io/host.generated: 'true'
+    labels:
+      app: va-dotnet-project
+    name: va-dotnet-project
+  spec:
+    port:
+      targetPort: 8080
+    to:
+      kind: Service
+      name: va-dotnet-project
+
+parameters:
+- name: NAMESPACE
+  displayName: Namespace
+  description: OpenShift Project name.
+  required: true
+  value: dev

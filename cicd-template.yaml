@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: cicd
+  group: cicd
+metadata:
+  annotations:
+    iconClass: icon-jenkins
+    tags: instant-app,jenkins,gogs,nexus,cicd,sonarqube
+  name: cicd
+message: "Use the following credentials for login:\nJenkins: use your OpenShift credentials\nNexus: admin/admin123\nSonarQube: admin/admin\nGogs Git Server: gogs/gogs"
+parameters:
+- displayName: DEV project name
+  value: dev
+  name: DEV_PROJECT
+  required: true
+- displayName: STAGE project name
+  value: stage
+  name: STAGE_PROJECT
+  required: true
+- displayName: Ephemeral
+  description: Use no persistent storage for Gogs and Nexus
+  value: "true"
+  name: EPHEMERAL
+  required: true
+- description: Webhook secret
+  from: '[a-zA-Z0-9]{8}'
+  generate: expression
+  name: WEBHOOK_SECRET
+  required: true
+
+objects:
+- apiVersion: v1
+  groupNames: null
+  kind: RoleBinding
+  metadata:
+    name: default_admin
+  roleRef:
+    name: admin
+  subjects:
+  - kind: ServiceAccount
+    name: default
+
+
+# Pipeline
+
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      pipeline.alpha.openshift.io/uses: '[{"name": "jenkins", "namespace": "", "kind": "DeploymentConfig"}]'
+    labels:
+      app: cicd-pipeline
+      name: cicd-pipeline
+    name: va-dotnet-project-pipeline
+  spec:
+    triggers:
+      - type: GitHub
+        github:
+          secret: ${WEBHOOK_SECRET}
+      - type: Generic
+        generic:
+          secret: ${WEBHOOK_SECRET}
+    runPolicy: Serial
+    source:
+      type: None
+    strategy:
+      jenkinsPipelineStrategy:
+        env:
+        - name: DEV_PROJECT
+          value: ${DEV_PROJECT}
+        - name: STAGE_PROJECT
+          value: ${STAGE_PROJECT}
+        jenkinsfile: |-
+          pipeline {
+              agent any
+              stages {
+                
+                stage('Build Image') {
+                  steps {
+                    script {
+                      openshift.withCluster() {
+                        openshift.withProject(env.DEV_PROJECT) {
+                          openshift.selector("bc", "va-dotnet-project-bc").startBuild("--wait=true")
+                        }
+                      }
+                    }
+                  }
+                }
+                
+                stage('Deploy DEV') {
+                  steps {
+                    script {
+                        openshift.withCluster() {
+                          openshift.withProject(env.DEV_PROJECT) {
+                            openshift.selector("dc", "va-dotnet-project").rollout().latest();
+                          }
+                        }
+                    }
+                  }
+                }
+                stage('Promote to STAGE?') {
+                  
+                  steps {
+                    timeout(time:15, unit:'MINUTES') {
+                        input message: "Promote to STAGE?", ok: "Promote"
+                    }
+                    script {
+                      openshift.withCluster() {
+                          openshift.tag("${env.DEV_PROJECT}/va-dotnet-project:latest", "${env.STAGE_PROJECT}/va-dotnet-project:stage")
+                      }
+                    }
+                  }
+                }
+                stage('Deploy STAGE') {
+                  
+                  steps {
+                    script {
+                      openshift.withCluster() {
+                        openshift.withProject(env.STAGE_PROJECT) {
+                          if (openshift.selector('dc', 'va-dotnet-project').exists()) {
+                            openshift.selector('dc', 'va-dotnet-project').delete()
+                            openshift.selector('svc', 'va-dotnet-project').delete()
+                            openshift.selector('route', 'va-dotnet-project').delete()
+                          }
+                          openshift.newApp("va-dotnet-project").narrow("svc").expose()
+                          openshift.set("probe dc/va-dotnet-project --readiness --get-url=http://:8080/actuator/health --initial-delay-seconds=30 --failure-threshold=10 --period-seconds=10")
+                          openshift.set("probe dc/va-dotnet-project --liveness  --get-url=http://:8080/actuator/health --initial-delay-seconds=180 --failure-threshold=10 --period-seconds=10")
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+          }
+      type: JenkinsPipeline
